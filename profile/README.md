@@ -6,19 +6,21 @@
 
 🏠 **사이트** · [hanchae.java21.net](https://hanchae.java21.net) &nbsp;|&nbsp; 📝 **바뀐 내용** · 사이트의 '릴리즈' 버튼(`/releases`), 지금 판 1.12.0 (2026-11-23)
 
-## 한채의 말
+## 서비스 화면
 
-| 한채에서 | 흔히 부르는 이름 |
+| 마을 (첫 화면) | 대문 · 마당 (한 블로그) |
 | --- | --- |
-| 한채 | 블로그 |
-| 마을 | 첫 화면. 모든 한채의 공개 기록이 모이는 곳 |
-| 대문 · 현판 | 블로그 첫 화면 · 블로그 이름 |
-| 마당 | 한 블로그의 글 목록 |
-| 기록 | 글 |
-| 방 · 마루 | 블로그 안의 카테고리 · 카테고리 없음 |
-| 골목 | 마을 전체의 주제 (10개) |
-| 이웃 | 구독 |
-| 방명록 | 방명록 |
+| <img src="https://raw.githubusercontent.com/blog-minju-2026/.github/main/profile/images/village.png" alt="마을: 골목별 기록, 지금 많이 읽는 기록, 북적이는 한채" width="420"> | <img src="https://raw.githubusercontent.com/blog-minju-2026/.github/main/profile/images/yard.png" alt="대문과 마당: 현판, 방 안내, 기록 목록, 태그" width="420"> |
+| **기록 읽기** | **기록 쓰기** |
+| <img src="https://raw.githubusercontent.com/blog-minju-2026/.github/main/profile/images/post.png" alt="기록 상세: 방, 골목, 조회수와 본문" width="420"> | <img src="https://raw.githubusercontent.com/blog-minju-2026/.github/main/profile/images/write.png" alt="글쓰기: 에디터와 방 · 골목 · 태그 · 공개 범위 설정" width="420"> |
+
+<details>
+<summary>휴대폰 화면 (360px 폭에서도 가로 스크롤 없이)</summary>
+<br>
+<img src="https://raw.githubusercontent.com/blog-minju-2026/.github/main/profile/images/mobile-post.png" alt="휴대폰에서 본 기록 화면" width="260">
+</details>
+
+> 화면의 한채 · 기록은 소개용으로 넣은 예시 데이터다.
 
 ## 할 수 있는 것
 
@@ -30,6 +32,52 @@
 - **이웃과 어울리기** — 공감, 댓글, 방명록, 이웃 맺기
 - **내 한채 꾸리기** — 한채 관리, 방 관리, 기록 · 댓글 · 이웃 관리, 내 정보
 - **마을 지키기** — 서비스 관리자는 기록 · 댓글 숨김과 회원 이용 제한으로 마을을 지킨다
+
+## 아키텍처
+
+화면 파일과 JSON API를 Django 서버 하나가 같은 주소에서 내보낸다. 그래서 세션 쿠키와 CSRF가 그대로 통하고, 권한 검사는 모두 API에서 한다.
+
+<img src="https://raw.githubusercontent.com/blog-minju-2026/.github/main/profile/images/architecture.png" alt="한채 아키텍처: 브라우저, 학교 서버(nginx · Django 컨테이너 2개), MySQL, 외부 서비스, GitHub Actions" width="100%">
+
+## ERD
+
+MySQL 8 테이블 20개다. 원본 설계는 Crowfoot 「한채 블로그 플랫폼」 문서와 [data-model.md](https://github.com/blog-minju-2026/blog-docs/blob/main/specs/001-blog/data-model.md)에 있다.
+
+<img src="https://raw.githubusercontent.com/blog-minju-2026/.github/main/profile/images/erd.png" alt="한채 ERD: 회원 · 인증, 한채, 기록, 소통, 순위, 관리 영역의 테이블 20개와 관계" width="100%">
+
+## 동작 흐름
+
+P1 이야기 1~6만으로 **가입 → 한채 짓기 → 기록 발행 → 마을에서 발견 → 읽기 · 댓글 · 공감** 한 바퀴가 돈다.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor A as 글쓴이
+    actor B as 이웃
+    participant W as 화면 (HTML + JS)
+    participant API as Django API
+    participant DB as MySQL
+
+    A->>W: 가입 / 카카오 · 구글 · 네이버 로그인
+    W->>API: POST /api/auth/signup · /accounts/{provider}/login
+    A->>W: 한채 짓기 (주소 · 현판 · 소개)
+    W->>API: POST /api/blogs
+    API->>DB: blogs (회원당 1채, 주소 영구 예약)
+    A->>W: 기록 쓰기 · 사진 붙여넣기
+    W->>API: POST /api/images → POST /api/blogs/{address}/posts
+    API->>API: 권한 검사 · nh3로 본문 정제 · 중복 발행 막기
+    API->>DB: posts · post_tags · post_images (한 트랜잭션)
+
+    B->>W: 마을 · 골목 · 검색에서 기록 발견
+    W->>API: GET /api/... (볼 수 있는 기록만, 숨긴 글은 404)
+    B->>W: 기록 읽기
+    W->>API: GET /api/blogs/{address}/posts/{no}
+    W->>API: POST .../views (30분 안 중복 조회 제외)
+    B->>W: 공감 · 댓글 · 이웃 맺기
+    W->>API: 상태를 바꾸는 요청은 모두 CSRF 토큰과 함께
+    API->>DB: post_likes · comments · subscriptions
+    Note over API,DB: 지금 많이 읽는 기록은 정각마다 직전 1시간 조회로 순위를 다시 매긴다
+```
 
 ## 이렇게 만든다
 
@@ -60,3 +108,17 @@
 | DB | MySQL 8 (ERD 는 Crowfoot 「한채 블로그 플랫폼」) |
 | 테스트 | Django 테스트 러너 · DRF `APITestCase` (PR 마다 GitHub Actions 로 실행) |
 | 배포 | Docker · gunicorn · nginx · GitHub Actions (main 에 합치면 학교 서버로 무중단 자동 배포) |
+
+## 한채의 말
+
+| 한채에서 | 흔히 부르는 이름 |
+| --- | --- |
+| 한채 | 블로그 |
+| 마을 | 첫 화면. 모든 한채의 공개 기록이 모이는 곳 |
+| 대문 · 현판 | 블로그 첫 화면 · 블로그 이름 |
+| 마당 | 한 블로그의 글 목록 |
+| 기록 | 글 |
+| 방 · 마루 | 블로그 안의 카테고리 · 카테고리 없음 |
+| 골목 | 마을 전체의 주제 (10개) |
+| 이웃 | 구독 |
+| 방명록 | 방명록 |
